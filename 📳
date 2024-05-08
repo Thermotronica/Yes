@@ -1,0 +1,65 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <qrencode.h>
+#include <microhttpd.h>
+
+void generateQRCode(const char *data, char *outputBuffer) {
+    QRcode *qr = QRcode_encodeString(data, 0, QR_ECLEVEL_L, QR_MODE_8, 1);
+    if (qr) {
+        int index = 0;
+        for (int y = 0; y < qr->width; y++) {
+            for (int x = 0; x < qr->width; x++) {
+                outputBuffer[index++] = qr->data[y * qr->width + x] & 1 ? '#' : ' ';
+            }
+            outputBuffer[index++] = '\n';
+        }
+        outputBuffer[index] = '\0';
+        QRcode_free(qr);
+    }
+}
+
+int answer_to_connection(void *cls, struct MHD_Connection *connection,
+                         const char *url, const char *method,
+                         const char *version, const char *upload_data,
+                         size_t *upload_data_size, void **con_cls) {
+    const char *page = "<html><body><h1>Next Second QR Code</h1><pre>%s</pre></body></html>";
+
+    // Get current time
+    time_t rawtime;
+    struct tm *timeinfo;
+    char buffer[80];
+
+    time(&rawtime);
+    timeinfo = localtime(&rawtime);
+
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
+
+    char qrCodeOutput[5000];
+    generateQRCode(buffer, qrCodeOutput);
+
+    char response[5500];
+    sprintf(response, page, qrCodeOutput);
+
+    struct MHD_Response *mhd_response = MHD_create_response_from_buffer(strlen(response), (void *) response, MHD_RESPMEM_MUST_COPY);
+    MHD_add_response_header(mhd_response, "Content-Type", "text/html");
+    int ret = MHD_queue_response(connection, MHD_HTTP_OK, mhd_response);
+    MHD_destroy_response(mhd_response);
+    return ret;
+}
+
+int main() {
+    struct MHD_Daemon *daemon;
+    daemon = MHD_start_daemon(MHD_USE_THREAD_PER_CONNECTION, 8080, NULL, NULL,
+                              &answer_to_connection, NULL, MHD_OPTION_END);
+    if (daemon == NULL) {
+        printf("Failed to start server\n");
+        return 1;
+    }
+
+    printf("Server started on port 8080\n");
+    getchar();
+
+    MHD_stop_daemon(daemon);
+    return 0;
+}
